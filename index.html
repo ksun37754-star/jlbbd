@@ -776,6 +776,28 @@ tbody tr.anomaly { background: rgba(239, 68, 68, 0.1); border-left: 3px solid va
 .qr-hint { margin-top: 15px; font-size: 14px; color: var(--text-sub); line-height: 1.4; }
 .qr-refresh-btn { margin-top: 15px; padding: 8px 16px; background: var(--primary-color); color: white; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; }
 .qr-refresh-btn:hover { background: var(--primary-hover); }
+
+/* 列宽调整器样式 */
+.resizer, .batch-resizer {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 5px;
+    height: 30px;
+    cursor: col-resize;
+    background: transparent;
+    transition: background 0.2s;
+    border-radius: 2px;
+}
+
+.resizer:hover, .batch-resizer:hover {
+    background: var(--primary-color);
+}
+
+th {
+    position: relative;
+}
 </style>
 </head>
 <body>
@@ -3170,17 +3192,117 @@ function getColumnDefs() {
         { key: 'qualified', label: '审核', sort: 'qualified' }
     ];
 }
+// 列宽调整相关变量
+let resizingColumn = null;
+let startX = 0;
+let startWidth = 0;
+
+// 加载列宽设置
+function loadColumnWidths() {
+    try {
+        const savedWidths = localStorage.getItem('jlb_column_widths');
+        return savedWidths ? JSON.parse(savedWidths) : {};
+    } catch (e) {
+        return {};
+    }
+}
+
+// 保存列宽设置
+function saveColumnWidths(widths) {
+    try {
+        localStorage.setItem('jlb_column_widths', JSON.stringify(widths));
+    } catch (e) {
+        console.error('保存列宽设置失败:', e);
+    }
+}
+
+// 列宽调整开始
+function startResize(e, column, th) {
+    e.preventDefault();
+    e.stopPropagation();
+    resizingColumn = column;
+    startX = e.clientX;
+    startWidth = th.offsetWidth;
+    
+    document.addEventListener('mousemove', resizeColumn);
+    document.addEventListener('mouseup', stopResize);
+    document.body.style.cursor = 'col-resize';
+}
+
+// 列宽调整中
+function resizeColumn(e) {
+    if (!resizingColumn) return;
+    
+    const deltaX = e.clientX - startX;
+    const newWidth = Math.max(50, startWidth + deltaX); // 最小宽度50px
+    
+    // 应用新宽度
+    const ths = document.querySelectorAll('#mainTableHeader th');
+    let index = 0;
+    for (let i = 0; i < ths.length; i++) {
+        if (ths[i].dataset.column === resizingColumn) {
+            index = i;
+            break;
+        }
+    }
+    
+    if (index > 0) {
+        const th = ths[index];
+        th.style.width = `${newWidth}px`;
+        th.style.minWidth = `${newWidth}px`;
+        
+        // 同时调整tbody中对应列的宽度
+        const trs = document.querySelectorAll('#dataTableBody tr');
+        trs.forEach(tr => {
+            const td = tr.children[index];
+            if (td) {
+                td.style.width = `${newWidth}px`;
+                td.style.minWidth = `${newWidth}px`;
+            }
+        });
+    }
+}
+
+// 列宽调整结束
+function stopResize() {
+    if (resizingColumn) {
+        // 保存列宽设置
+        const widths = {};
+        const ths = document.querySelectorAll('#mainTableHeader th');
+        ths.forEach(th => {
+            if (th.dataset.column) {
+                widths[th.dataset.column] = th.offsetWidth;
+            }
+        });
+        saveColumnWidths(widths);
+        
+        resizingColumn = null;
+        document.removeEventListener('mousemove', resizeColumn);
+        document.removeEventListener('mouseup', stopResize);
+        document.body.style.cursor = '';
+    }
+}
+
 function renderTable() {
     const tbody = document.getElementById('dataTableBody'), theadRow = document.getElementById('mainTableHeader');
     tbody.innerHTML = ''; theadRow.innerHTML = '';
     const columns = getColumnDefs();
+    const savedWidths = loadColumnWidths();
+    
     let headerHtml = `<th width="40" onclick="event.stopPropagation()"><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"></th>`;
     headerHtml += `<th width="60" onclick="event.stopPropagation()">编辑</th>`;
     columns.forEach(col => {
         if (App.userColumnVisibility[col.key]) {
-            const sortAttr = col.sort ? `onclick="sortTable('${col.sort}', ${col.isNum})"` : '';
             const sortClass = (App.sortConfig.key === col.sort) ? (App.sortConfig.ascending ? ' sort-asc' : ' sort-desc') : '';
-            headerHtml += `<th ${sortAttr} class="${sortClass}">${col.label}</th>`;
+            const widthStyle = savedWidths[col.key] ? `style="width: ${savedWidths[col.key]}px; min-width: ${savedWidths[col.key]}px;"` : '';
+            const dblClickAttr = col.sort ? `ondblclick="sortTable('${col.sort}', ${col.isNum})"` : '';
+            headerHtml += `<th ${dblClickAttr} class="${sortClass}" ${widthStyle} data-column="${col.key}">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>${col.label}</span>
+                    <div class="resizer" style="width: 4px; height: 20px; cursor: col-resize; background: transparent;" 
+                         onmousedown="startResize(event, '${col.key}', this.closest('th'))"></div>
+                </div>
+            </th>`;
         }
     });
 
@@ -3736,8 +3858,100 @@ function openBatchModal() {
 }
 
 
+// 批量录入表格列宽调整相关变量
+let resizingBatchColumn = null;
+let batchStartX = 0;
+let batchStartWidth = 0;
+
+// 加载批量录入表格列宽设置
+function loadBatchColumnWidths() {
+    try {
+        const savedWidths = localStorage.getItem('jlb_batch_column_widths');
+        return savedWidths ? JSON.parse(savedWidths) : {};
+    } catch (e) {
+        return {};
+    }
+}
+
+// 保存批量录入表格列宽设置
+function saveBatchColumnWidths(widths) {
+    try {
+        localStorage.setItem('jlb_batch_column_widths', JSON.stringify(widths));
+    } catch (e) {
+        console.error('保存批量录入表格列宽设置失败:', e);
+    }
+}
+
+// 批量录入表格列宽调整开始
+function startBatchResize(e, column, th) {
+    e.preventDefault();
+    e.stopPropagation();
+    resizingBatchColumn = column;
+    batchStartX = e.clientX;
+    batchStartWidth = th.offsetWidth;
+    
+    document.addEventListener('mousemove', resizeBatchColumn);
+    document.addEventListener('mouseup', stopBatchResize);
+    document.body.style.cursor = 'col-resize';
+}
+
+// 批量录入表格列宽调整中
+function resizeBatchColumn(e) {
+    if (!resizingBatchColumn) return;
+    
+    const deltaX = e.clientX - batchStartX;
+    const newWidth = Math.max(80, batchStartWidth + deltaX); // 最小宽度80px
+    
+    // 应用新宽度
+    const ths = document.querySelectorAll('#batchTableHeader th');
+    let index = 0;
+    for (let i = 0; i < ths.length; i++) {
+        if (ths[i].dataset.column === resizingBatchColumn) {
+            index = i;
+            break;
+        }
+    }
+    
+    if (index >= 0) {
+        const th = ths[index];
+        th.style.width = `${newWidth}px`;
+        th.style.minWidth = `${newWidth}px`;
+        
+        // 同时调整tbody中对应列的宽度
+        const trs = document.querySelectorAll('#batchBody tr');
+        trs.forEach(tr => {
+            const td = tr.children[index];
+            if (td) {
+                td.style.width = `${newWidth}px`;
+                td.style.minWidth = `${newWidth}px`;
+            }
+        });
+    }
+}
+
+// 批量录入表格列宽调整结束
+function stopBatchResize() {
+    if (resizingBatchColumn) {
+        // 保存列宽设置
+        const widths = {};
+        const ths = document.querySelectorAll('#batchTableHeader th');
+        ths.forEach(th => {
+            if (th.dataset.column) {
+                widths[th.dataset.column] = th.offsetWidth;
+            }
+        });
+        saveBatchColumnWidths(widths);
+        
+        resizingBatchColumn = null;
+        document.removeEventListener('mousemove', resizeBatchColumn);
+        document.removeEventListener('mouseup', stopBatchResize);
+        document.body.style.cursor = '';
+    }
+}
+
 function renderBatchHeader() {
     const thead = document.getElementById('batchTableHeader');
+    const savedWidths = loadBatchColumnWidths();
     const cols = [
         {w:'10%',k:'time',l:'做单时间'}, {w:'12%',k:'project',l:'项目'}, {w:'8%',k:'amount',l:'推广费'},
         {w:'8%',k:'prepayEligible',l:'预付资格'}, {w:'8%',k:'prepay',l:'预付金额'}, {w:'10%',k:'prepayTime',l:'预付时间'},
@@ -3751,7 +3965,14 @@ function renderBatchHeader() {
     let html = '';
     cols.forEach(c => { 
         if (!c.h) { // 只显示没有 h 属性的列
-            html += `<th style="width:${c.w};${c.c?'text-align:center;':''};">${c.l}</th>`; 
+            const widthStyle = savedWidths[c.k] ? `style="width: ${savedWidths[c.k]}px; min-width: ${savedWidths[c.k]}px;"` : `style="width:${c.w};${c.c?'text-align:center;':''};"`;
+            html += `<th ${widthStyle} data-column="${c.k}">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>${c.l}</span>
+                    <div class="batch-resizer" style="width: 4px; height: 20px; cursor: col-resize; background: transparent;" 
+                         onmousedown="startBatchResize(event, '${c.k}', this.closest('th'))"></div>
+                </div>
+            </th>`; 
         }
     });
     thead.innerHTML = html;
@@ -3769,7 +3990,21 @@ function addBatchRow(data = {}) {
     const orderDate = data.time || today;
     const prepayDate = data.prepayTime || addDays(orderDate, 1);
     const settleDate = data.settleTime || addDays(orderDate, 15);
-    tr.innerHTML = `<td style="width:10%;"><input type="date" value="${orderDate}" class="b-time" style="width: 100%;"></td><td style="width:12%;"><input type="text" value="${data.project||''}" class="b-project" onblur="triggerSmartPrice(this)" style="width: 100%;"></td><td style="width:8%;"><input type="number" step="0.01" value="${data.amount||''}" class="b-amount" onblur="checkRisk(this)" style="width: 100%;"></td><td style="width:8%;"><select class="b-prepayEligible" style="width: 100%;" onchange="updateBatchPrepayAmount(this)"><option value="yes" ${data.prepayEligible === 'yes' ? 'selected' : ''}>是</option><option value="no" ${data.prepayEligible === 'no' || !data.prepayEligible ? 'selected' : ''}>否</option></select></td><td style="width:8%;"><input type="number" step="0.01" value="${data.prepayEligible === 'yes' ? (data.prepay || (parseFloat(data.amount) * 0.5).toFixed(2)) : (data.prepay || '0')}" class="b-prepay" style="width: 100%;"></td><td style="width:10%;"><input type="date" value="${prepayDate}" class="b-prepayTime" style="width: 100%;"></td><td style="width:10%;" class="search-dropdown-container"><input type="text" value="${data.channelName||''}" class="b-channel" placeholder="输入检索..." autocomplete="off" oninput="handleChannelSearch(this, 'batch')" onblur="triggerSmartPrice(this)" style="width: 100%;"><div class="search-dropdown-list"></div></td><td style="width:7%;"><input type="number" step="0.01" value="${data.channelPrice||''}" class="b-price" style="width: 100%;"></td><td style="width:8%;"><input type="text" value="${data.broker||''}" class="b-broker" style="width: 100%;"></td><td style="width:8%;"><input type="text" value="${data.fundAccount||''}" class="b-fundAccount" style="width: 100%;"></td><td style="width:8%;"><input type="text" value="${data.customer||''}" class="b-cust" placeholder="姓名" style="width: 100%;"></td><td style="width:10%;"><input type="text" value="${data.phone||''}" class="b-phone" placeholder="手机" style="width: 100%;"></td><td style="width:10%;" class="search-dropdown-container"><input type="text" value="${data.group||''}" class="b-group" placeholder="输入搜索..." autocomplete="off" oninput="handleGroupSearch(this, 'batch')" data-method="${data.method||''}" data-contact="${data.contact||''}" data-card="${data.card||''}" style="width: 100%;"><div class="search-dropdown-list"></div></td><td style="width:8%; display: none;"><input type="text" value="${data.method||'支付宝'}" class="b-method" readonly style="background:rgba(0,0,0,0.05); width: 100%;"></td><td style="width:8%;"><input type="text" value="${data.contact||''}" class="b-contact" readonly style="background:rgba(0,0,0,0.05); width: 100%;"></td><td style="width:12%; display: none;"><input type="text" value="${data.card||''}" class="b-card" readonly style="background:rgba(0,0,0,0.05); width: 100%;"></td><td style="width:8%;"><input type="number" step="0.01" value="${data.settleAmount||''}" class="b-settleAmount" style="width: 100%;"></td><td style="width:10%;"><input type="date" value="${settleDate}" class="b-settle" style="width: 100%;"></td><td style="width:8%; text-align:center; white-space:nowrap;"><button class="btn btn-info btn-sm" onclick="copyRowUp(this)" title="复制上一行">📋</button><button class="btn btn-danger btn-sm" onclick="this.closest('tr').remove()" title="删除此行">×</button></td>`;
+    
+    // 加载保存的列宽设置
+    const savedWidths = loadBatchColumnWidths();
+    
+    // 定义列的默认宽度和键
+    const colKeys = ['time', 'project', 'amount', 'prepayEligible', 'prepay', 'prepayTime', 'channel', 'price', 'broker', 'fundAccount', 'cust', 'phone', 'group', 'method', 'contact', 'card', 'settleAmount', 'settle', 'act'];
+    const defaultWidths = ['10%', '12%', '8%', '8%', '8%', '10%', '10%', '7%', '8%', '8%', '8%', '10%', '10%', '8%', '8%', '12%', '8%', '10%', '8%'];
+    
+    // 获取每列的宽度
+    const getColWidth = (index) => {
+        const key = colKeys[index];
+        return savedWidths[key] ? `${savedWidths[key]}px` : defaultWidths[index];
+    };
+    
+    tr.innerHTML = `<td style="width:${getColWidth(0)};min-width:${getColWidth(0)};"><input type="date" value="${orderDate}" class="b-time" style="width: 100%;"></td><td style="width:${getColWidth(1)};min-width:${getColWidth(1)};"><input type="text" value="${data.project||''}" class="b-project" onblur="triggerSmartPrice(this)" style="width: 100%;"></td><td style="width:${getColWidth(2)};min-width:${getColWidth(2)};"><input type="number" step="0.01" value="${data.amount||''}" class="b-amount" onblur="checkRisk(this)" style="width: 100%;"></td><td style="width:${getColWidth(3)};min-width:${getColWidth(3)};"><select class="b-prepayEligible" style="width: 100%;" onchange="updateBatchPrepayAmount(this)"><option value="yes" ${data.prepayEligible === 'yes' ? 'selected' : ''}>是</option><option value="no" ${data.prepayEligible === 'no' || !data.prepayEligible ? 'selected' : ''}>否</option></select></td><td style="width:${getColWidth(4)};min-width:${getColWidth(4)};"><input type="number" step="0.01" value="${data.prepayEligible === 'yes' ? (data.prepay || (parseFloat(data.amount) * 0.5).toFixed(2)) : (data.prepay || '0')}" class="b-prepay" style="width: 100%;"></td><td style="width:${getColWidth(5)};min-width:${getColWidth(5)};"><input type="date" value="${prepayDate}" class="b-prepayTime" style="width: 100%;"></td><td style="width:${getColWidth(6)};min-width:${getColWidth(6)};" class="search-dropdown-container"><input type="text" value="${data.channelName||''}" class="b-channel" placeholder="输入检索..." autocomplete="off" oninput="handleChannelSearch(this, 'batch')" onblur="triggerSmartPrice(this)" style="width: 100%;"><div class="search-dropdown-list"></div></td><td style="width:${getColWidth(7)};min-width:${getColWidth(7)};"><input type="number" step="0.01" value="${data.channelPrice||''}" class="b-price" style="width: 100%;"></td><td style="width:${getColWidth(8)};min-width:${getColWidth(8)};"><input type="text" value="${data.broker||''}" class="b-broker" style="width: 100%;"></td><td style="width:${getColWidth(9)};min-width:${getColWidth(9)};"><input type="text" value="${data.fundAccount||''}" class="b-fundAccount" style="width: 100%;"></td><td style="width:${getColWidth(10)};min-width:${getColWidth(10)};"><input type="text" value="${data.customer||''}" class="b-cust" placeholder="姓名" style="width: 100%;"></td><td style="width:${getColWidth(11)};min-width:${getColWidth(11)};"><input type="text" value="${data.phone||''}" class="b-phone" placeholder="手机" style="width: 100%;"></td><td style="width:${getColWidth(12)};min-width:${getColWidth(12)};" class="search-dropdown-container"><input type="text" value="${data.group||''}" class="b-group" placeholder="输入搜索..." autocomplete="off" oninput="handleGroupSearch(this, 'batch')" data-method="${data.method||''}" data-contact="${data.contact||''}" data-card="${data.card||''}" style="width: 100%;"><div class="search-dropdown-list"></div></td><td style="width:${getColWidth(13)};min-width:${getColWidth(13)}; display: none;"><input type="text" value="${data.method||'支付宝'}" class="b-method" readonly style="background:rgba(0,0,0,0.05); width: 100%;"></td><td style="width:${getColWidth(14)};min-width:${getColWidth(14)};"><input type="text" value="${data.contact||''}" class="b-contact" readonly style="background:rgba(0,0,0,0.05); width: 100%;"></td><td style="width:${getColWidth(15)};min-width:${getColWidth(15)}; display: none;"><input type="text" value="${data.card||''}" class="b-card" readonly style="background:rgba(0,0,0,0.05); width: 100%;"></td><td style="width:${getColWidth(16)};min-width:${getColWidth(16)};"><input type="number" step="0.01" value="${data.settleAmount||''}" class="b-settleAmount" style="width: 100%;"></td><td style="width:${getColWidth(17)};min-width:${getColWidth(17)};"><input type="date" value="${settleDate}" class="b-settle" style="width: 100%;"></td><td style="width:${getColWidth(18)};min-width:${getColWidth(18)}; text-align:center; white-space:nowrap;"><button class="btn btn-info btn-sm" onclick="copyRowUp(this)" title="复制上一行">📋</button><button class="btn btn-danger btn-sm" onclick="this.closest('tr').remove()" title="删除此行">×</button></td>`;
     document.getElementById('batchBody').appendChild(tr);
 }
 function triggerSmartPrice(inputEl) { const row = inputEl.closest('tr'); const project = row.querySelector('.b-project').value; const channel = row.querySelector('.b-channel').value; const priceInput = row.querySelector('.b-price'); if(project && channel && !priceInput.value) { const price = App.getSmartPrice(channel, project); if(price !== null) { priceInput.value = price; priceInput.style.backgroundColor = '#d1fae5'; setTimeout(()=>priceInput.style.backgroundColor='', 1000); } } }
